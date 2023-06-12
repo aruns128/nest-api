@@ -1,6 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { CreateAuthDto } from './dto/create-auth.dto';
-import { UpdateAuthDto } from './dto/update-auth.dto';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Users } from './entities/auth.entity';
@@ -16,18 +15,35 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  async createUser(createAuthDto: CreateAuthDto): Promise<CreateAuthDto> {
-    const { password, email, role } = createAuthDto;
-    const saltOrRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltOrRounds);
-    const userDetails = {
-      email,
-      password: hashedPassword,
-      role,
-    };
-    const newUser = this.userRepository.create(userDetails);
+  async createUser(
+    createAuthDto: CreateAuthDto,
+  ): Promise<Partial<CreateAuthDto | undefined>> {
+    const { email, role, password } = createAuthDto;
+    const userExists = await this.findByUsername(email);
 
-    return await this.userRepository.save(newUser);
+    if (userExists) {
+      throw new BadRequestException('User already exists');
+    } else {
+      const saltOrRounds = 10;
+      const hashedPassword = await bcrypt.hash(password, saltOrRounds);
+      const userDetails = {
+        email,
+        password: hashedPassword,
+        role,
+      };
+
+      const newUser = this.userRepository.create(userDetails);
+
+      const createdUser = await this.userRepository.save(newUser);
+
+      const response = {
+        id: createdUser.id,
+        email: createdUser.email,
+        role: createdUser.role,
+      };
+
+      return response;
+    }
   }
 
   async getAllUsers(): Promise<Users[]> {
@@ -42,39 +58,21 @@ export class AuthService {
     email: string,
     password: string,
   ): Promise<Partial<Users | undefined>> {
+    console.log(email);
     const user = await this.findByUsername(email);
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (isMatch) {
-      const token = await this.generateToken(user.id);
-      const retunObject = { token: token, id: user.id, email: user.email };
-      return retunObject;
+
+    if (user) {
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (isMatch) {
+        const token = await this.generateToken(user.id);
+        const retunObject = { token: token, id: user.id, email: user.email };
+        return retunObject;
+      }
+    } else {
+      return undefined;
     }
-    return undefined;
   }
-
-  findOne(id: number) {
-    return `This action returns a #${id} auth`;
-  }
-
-  update(id: number, updateAuthDto: UpdateAuthDto) {
-    return `This action updates a #${id} auth`;
-  }
-
-  remove(id: number) {
-    return `This action removes a #${id} auth`;
-  }
-
-  // async validateUser(email: string, password: string) {
-  //   // Implement your own user validation logic
-  //   const user = await this.userRepository.findByUsername(email);
-  //   if (user && user.password === password) {
-  //     return user;
-  //   }
-  //   return null;
-  // }
-
   async validateUserByJwt(payload: JwtPayload) {
-    // Implement your own user validation logic based on the payload
     const user = await this.userRepository.find({
       where: { id: payload.userId },
     });
@@ -84,5 +82,11 @@ export class AuthService {
   async generateToken(userId: number) {
     const payload: JwtPayload = { userId };
     return this.jwtService.sign(payload);
+  }
+
+  async getUser(id: number) {
+    const user = await this.userRepository.findOne({ where: { id } });
+    const retunObject = { id: user.id, email: user.email, role: user.role };
+    return retunObject;
   }
 }
